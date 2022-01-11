@@ -114,6 +114,20 @@ sudo netplan apply
 ip addr show dev ens32
 ```
 
+5. 使用开启root远程连接
+
+   ```
+   # 设置root密码
+   sudo passwd root
+   
+   # 开启远程登录
+   sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config
+   
+   sudo systemctl restart ssh
+   ```
+
+   
+
 #### 2. 初始化操作系统
 
 ```shell
@@ -493,13 +507,691 @@ docker run -it mysql mysql -h 192.168.6.31 -uroot -p
 
 
 
-## 7、Docker挂载
+## 7、Docker挂载（持久化存储)
 
+> 1. 容器中的数据如何存储？
+> 2. web应用的日志如何存储？如何获取错误日志排查故障？
 
+- 每一个容器都会有一个相关的挂载（默认位置：`/var/lib/docker/overlay2/<容器ID>`）
+- 容器使用overlay读写
+
+### 1、储存卷概述
+
+操作系统的目录树是由一组挂载点创建而成，这些挂载点描述了如何能构建出一个或多个文件系统。
+
+存储卷是容器目录树上的挂载点，其中一部分主机目录树已经被挂载了。
+
+如果没有存储卷，Docker 用户会受限于Union文件系统，仅提供镜像挂载。
+
+![image-20220109101911193](Docker基础-images/image-20220109101911193.png)
+
+> **如上图：**容器中运行着的一个程序，正写数据到文件中。
+>
+> 第一个文件写入到了根文件系统。操作系统控制根文件系统将改变的部分装入 Union文件系统的顶层。
+>
+> 第二个文件则写入到已经挂载于容器目录树/data 中。改动会通过存储卷直接影响到主机文件系统上。
+
+虽然Union文件系统适用于构建和分享镜像，但对持久化或共享数据而言，并不是理想的方法。存储卷填补了这些用例，并在容器化系统设计中发挥了关键作用。
+
+**存储卷特点：**
+
+- 一个数据分割和共享的工具
+- 与容器无关的范围和生命周期
+
+### 2、挂载数据到容器
+
+Docker提供三种方式将数据从宿主机挂载到容器中： 
+
+- **volumes：**Docker管理宿主机文件系统的一部分（/var/lib/docker/volumes）。保存数据的最佳方式。 
+- **Bind Mounts：**将宿主机上的任意位置的文件或者目录挂载到容器中。 
+- **tmpfs：**挂载存储在主机系统的内存中，而不会写入主机的文件系统。如果不希望将数据持久存储在任何位置，可以使用 tmpfs，同时避免写入容器可写层，提高性能。（临时保存到内存中，容器停止`tmpfs`被删除）
+
+![image-20220110135653734](Docker基础-images/image-20220110135653734.png)
+
+Docker数据卷相关命令`docker volume --help`
+
+### 3、volume
+
+- Docker管理宿主机文件系统的一部分（默认位置：`/var/lib/docker/volumes`）
+- 保存数据的最佳方式。
+
+```shell
+# 管理卷：
+docker volume create nginx1
+docker volume create nginx2
+docker volume ls
+docker volume inspect nginx1
+# 用卷创建一个容器：
+docker pull geray/nginx:v1.17.10
+
+# 容器数据映射到宿主机
+docker run -d --rm -p 8080:80 --name=nginx1 --mount src=nginx1,dst=/usr/local/nginx/html geray/nginx:v1.17.10
+docker run -d --rm -p 8081:80 --name=nginx2 -v nginx2:/usr/local/nginx/html geray/nginx:v1.17.10
+
+# 清理：
+docker stop nginx1 nginx{1,2}
+docker rm nginx1 nginx{1,2}
+docker volume rm nginx{1,2} # 删除数据卷
+```
+
+**小结：** 
+
+1. 如果没有指定卷，自动创建。
+1. 建议使用--mount，更通用。 
+1. volume只能存放到docker的特定区域（默认位置：`/var/lib/docker/volumes/<volume-name>/_data`）
+1. docker管理宿主机文件系统的一部分
+1. src数据卷中如果有数据，会将数据映射到容器中，并隐藏容器中原有的数据
+1. src数据卷中如果没有数据，会将容器中的原有数据映射出来
+
+### 4、Bind Mounts
+
+- 宿主机任意位置与docker容器映射
+- bind mounts不由docker管理
+- bind mounts可以将宿主机上的任意位置的文件或者目录挂载到容器中
+- volume会将容器中的原有文件映射到宿主机（宿主机原位置是否存在文件？），bind mounts会将宿主机数据映射到容器（隐藏原有容器的源文件）
+- 格式：`--mount type=bind,src=源目录,dst=目标目录`
+
+```
+# 挂载目录：
+docker run -d -it -p 8083:80 --name=nginx3 --mount type=bind,src=/tmp/nginx3,dst=/usr/local/nginx/html geray/nginx:v1.17.10
+# /tmp/nginx3必须存在
+
+docker run -d -it -p 8084:80 --name=nginx4 -v /tmp/nginx4:/usr/local/nginx/html geray/nginx:v1.17.10
+
+# 挂载文件
+docker run -d -it -p 8085:80 --name=nginx5 -v /tmp/nginx5/index.html:/usr/local/nginx/html/index.html geray/nginx:v1.17.10
+
+docker run -d -it -p 8086:80 --name=nginx6 --mount type=bind,src=/tmp/nginx6/index.html,dst=/usr/local/nginx/html/index.html geray/nginx:v1.17.10
+
+# 验证绑定：
+docker inspect <container-name>
+
+# 清理：
+docker stop nginx{1..6}
+docker rm nginx{1..6}
+rm -rf /tmp/nginx{1..6}
+```
+
+**小结：**
+
+> **目录：**
+>
+> 1. 使用mount挂载目录时，src源目录必须存在（否则抛出错误信息）
+> 2. 使用`-v`挂载目录时，src源目录不存在会自动创建
+
+> **文件：**
+>
+> 1. `mount`和`-v`挂载文件，src源文件必须存在，否则抛出错误信息：`bind source path does not exist: <文件路径>.`
+
+- ~~bind Mount无论`src`源位置中是否存在数据，都会隐藏容器中原有数据~~
+
+### 5、Volume VS Bind Mounts总结
+
+- 使用`-v`参数挂载时，`:`前如果是路径则是`bind mounts`方式，否则是`volume`方式
+- 两种方式挂载时，如果宿主机目录中存在数据，则会覆盖容器中原有的数据
+
+**Volume：**
+
+1. 如果没有指定卷，自动创建。
+1. 多个运行容器之间共享数据，多个容器可以同时挂载相同的卷。 
+1. volume只能存放到docker的特定区域（默认位置：`/var/lib/docker/volumes/<volume-name>/_data`）
+1. docker管理宿主机文件系统的一部分（当容器停止或被移除时，该卷依然存在；明确删除卷时，卷才会被删除。 ）
+1. src数据卷中如果有数据，会将数据映射到容器中，并隐藏容器中原有的数据
+1. src数据卷中如果没有数据，会将容器中的原有数据映射出来
+1. 将容器的数据存储在远程主机或其他存储上（间接） 
+1. 将数据从一台Docker主机迁移到另一台时，先停止容器，然后备份卷的目录（/var/lib/docker/volumes/）  
+
+**Bind Mounts**
+
+1. 使用mount挂载目录时，src源目录必须存在（否则抛出错误信息）
+
+2. 使用`-v`挂载目录时，src源目录不存在会自动创建
+
+3. `mount`和`-v`挂载文件，src源文件必须存在，否则抛出错误信息：`bind source path does not exist: <文件路径>.`
+
+4. ~~bind Mount无论src源位置中是否存在数据，都会隐藏容器中原有数据~~（错误描述）
+
+   
+
+### 6、tmpfs
+
+tmpfs是Linux/Unix系统上的一种基于内存的虚拟文件系统。tmpfs可以使用您的内存或swap分区来存储文件(即它的存储空间在virtual memory 中, VM由real memory和swap组成)。由此可见，tmpfs主要存储暂存的文件。
+
+**特点:**
+
+1. 动态文件系统的大小。
+2. tmpfs 使用VM建的文件系统，速度当然快。
+3. 重启后数据丢失。
+
+> 实际应用中，为应用的特定需求设定此文件系统，可以提升应用读写性能，如将squid 缓存目录放在/tmp, php session 文件放在/tmp, socket文件放在/tmp, 或者使用/tmp作为其它应用的缓存设备
+
+如果Docker位于Linux操作系统上，可以使用`tmpfs `mounts。使用`tmpfs`挂载创建容器时，容器可以在容器的可写层外创建文件。
+
+与volume和绑定挂载相反，`tmpfs`挂载是临时的，并且仅保留在主机内存中。当容器停止后，将`tmpfs`删除安装，并且不会保留写在那里的文件。
+
+- tmpfs无法实现容器间共享
+- 只有在Linux上运行Docker时才能使用此功能
+
+#### tmpfs使用（没有src）
+
+- 该`--tmpfs`标志不允许您指定任何可配置选项。
+- 该`--tmpfs`标志不能与swarm服务一起使用。你必须使用`--mount`。
+
+> 使用tmpfs挂载的两种方式
+>
+> 1. `--tmpfs`标志
+> 2. `--mount`带有`type=tmpfs`和`destination`选项的 标志
+
+```
+# --mount type=tmpfs方式
+docker run -itd --name nginx-tmpfs1 --mount type=tmpfs,dst=/usr/local/nginx/app geray/nginx:v1.17.10
+
+# --tmpfs方式
+docker run -itd --name nginx-tmpfs2 --tmpfs /usr/local/nginx/app geray/nginx:v1.17.10
+
+docker stop nginx-tmpfs{1,2}
+docker rm nginx-tmpfs{1,2}
+```
+
+**指定tmpfs选项：**
+
+| 选项       | 描述                                                         |
+| ---------- | ------------------------------------------------------------ |
+| tmpfs-size | tmpfs的大小以字节为单位。默认无限制。                        |
+| tmpfs-mode | 八进制中tmpfs的文件模式。例如，`700`或`0770`。默认为`1777`或全局可写。 |
+
+```
+# 使用tmpfs挂载，并设置容器不是全局可读
+docker run -d -it \
+     --name tmptest \
+     --mount type=tmpfs,dst=/usr/local/nginx/app,tmpfs-mode=1770 \
+     geray/nginx:v1.17.10
+```
+
+### 7、操作实例
+
+1. 创建名为`tomcat`的volume数据卷
+
+   ```
+   docker volume create tomcat
+   ```
+
+2. 使用`geray/tomcat9:latest`镜像创建容器
+
+   > - 容器名：tomcat
+   >
+   > - 将容器的端口映射到宿主机上的8080端口
+
+   ```
+   docker pull geray/tomcat9:latest
+   
+   docker inspect geray/tomcat9:latest | grep -A2 -i ExposedPorts
+   
+   docker run -d --name tomcat -p 8080:8080 geray/tomcat9:latest
+   ```
+
+3. 使用`geray/tomcat9:latest`镜像创建`tomcat1`容器，对外暴露端口8081
+
+   > 1. 使用上面创建的`tomcat`卷挂载镜像的日志目录
+   > 2. 使用`volume`方式挂载容器中的配置文件到`tomcat-conf`数据卷
+   > 3. 使用`bind mounts`方式挂载tomcat的项目路径到`/tmp/tomcat/webapps`
+   > 4. 通过宿主机修改index.html并访问
+
+   ```
+   mkdir -p /tmp/tomcat/webapps
+   
+   docker run -d \
+   	--name tomcat1 -p 8081:8080 \
+   	--mount type=volume,src=tomcat,dst=/usr/local/tomcat/logs \
+   	-v tomcat-conf:/usr/local/tomcat/conf \
+   	--mount type=bind,src=/tmp/tomcat/webapps,dst=/usr/local/tomcat/webapps \
+   	geray/tomcat9:latest
+   ```
+
+4. 清理环境
+
+   ```
+   for i in $(docker ps -a | awk '{print $1}');do docker stop $i && docker rm $i;done
+   
+   docker volume prune
+   rm -rf /tmp/tomcat
+   ```
+
+   
 
 ## 8、Docker网络
 
+```
+# 查看是否开启IPv4转发
+sysctl net.ipv4.ip_forward
+
+# 开启IPv4网络转发功能
+sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/g' /etc/sysctl.conf
+sysctl -p /etc/sysctl.conf
+
+# 重启网络服务（CentOS）
+systemctl restart network
+```
+
+
+
+ **Docker的4种网络模型：**
+
+- bridge：使用`--net=bridge`指定（默认）。
+
+  > 默认网络，Docker启动后创建一个docker0网桥，默认创建的容器也是添加到这个网桥中。
+  >
+  > ```
+  > docker run -itd --net=bridge --name=net1 geray/nginx:v1.17.10
+  > ```
+
+- host：使用`--net=host`指定。
+
+  > 容器不会获得一个独立的network namespace，而是与宿主机共用一个。这就意味着容器不会有自己的网卡信息（[端口映射](https://docs.docker.com/network/overlay/#publish-ports)也会不生效），而是使用宿主机的。容器除了网络，其他都是隔离的。
+  >
+  > ```
+  > docker run -it --net=host --name=net2 geray/nginx:v1.17.10 bash
+  > ```
+
+- none：使用`--net=none`指定。
+
+  > 获取独立的network namespace，但不为容器进行任何网络配置，需要我们手动配置。
+  >
+  > ```
+  > docker run -it --net=none --name=net3 geray/nginx:v1.17.10 bash
+  > ```
+  >
+  > 挂在这个网络下的容器除了 lo，没有其他任何网卡（感兴趣的可以借助pipework配置IP）
+
+- container：使用`--net=container:<NAME_or_ID>`指定。
+
+  >与指定的容器使用同一个network namespace，具有同样的网络配置信息，两个容器除了网络，其他都还是隔离的。
+  >
+  >```
+  >docker run -it --net=container:net1 --name=net4 geray/nginx:v1.17.10 bash
+  >```
+
+- 自定义网络
+
+  > 与默认的bridge原理一样，但自定义网络具备内部DNS发现，可以通过容器名容器之间网络通信。
+
+Docker网络相关命令`docker network --help`
+
+```
+# 清理环境
+docker stop net{1..4}
+docker rm net{1..4}
+```
+
+### 1、操作实例
+
+1. 创建一个名为mysql的网络，并使用bridge模式
+
+   ```
+   docker network create mysql --driver=bridge
+   ```
+
+2. 使用MySQL官方镜像及说明创建MySQL容器并测试连接（并进行挂载测试）
+
+   ```shell
+   # 创建mysql容器，并使用docker的mysql网络
+   docker run -d --name mysql \
+   	-h test \
+   	--net=mysql \
+   	-v /tmp/mysql:/var/lib/mysql \
+   	-e MYSQL_ROOT_PASSWORD=12345 \
+       mysql:8
+   
+   # 创建一个同网络的容器并连接
+   docker run -it --name test --network mysql --rm mysql:8 mysql -h<容器IP> -uroot -p
+   ```
+
+3. 删除上面创建的网络和容器
+
+   ```shell
+   docker stop mysql test
+   docker rm mysql test
+   docker network prune
+   docker volume prune
+   ```
+   
+
 ## 9、Dockerfile
+
+### 1、构建镜像的原则
+
+- 小巧安全、适当复用
+
+> 尽量选择小的基础镜像，避免安装不必要的软件包、减少镜像层数、最小化容器权限
+
+**Linux操作系统的基础镜像:**
+
+| 镜像名称 |  大小  | 使用场景                                       |
+| :------- | :----: | :--------------------------------------------- |
+| busybox  | 1.15MB | 临时测试用                                     |
+| alpine   | 4.41MB | 主要用于测试，也可用于生产环境                 |
+| centos   | 200MB  | 主要用于生产环境，支持CentOS/Red               |
+| ubuntu   | 81.1MB | 主要用于生产环境，常用于人工智能计算和企业应用 |
+| debian   | 101MB  | 主要用于生产环境                               |
+
+### 2、Dockerfile命令说明
+
+| **指令**             | **描述**                                                     |
+| -------------------- | ------------------------------------------------------------ |
+| FROM                 | 基准镜像                                                     |
+| MAINTAINER（已弃用） | 镜像维护者姓名和邮箱地址                                     |
+| LABEL                | 设置标签比`MAINTAINER`更强大                                 |
+| RUN                  | 构建镜像时运行的shell命令                                    |
+| COPY                 | 拷贝数据到镜像                                               |
+| ENV                  | 设置环境变量                                                 |
+| USER                 | 设置用户名或UID                                              |
+| EXPOSE               | 声明容器运行的服务端口                                       |
+| HEALTHCHECK          | 容器中服务健康检查                                           |
+| WORKDIR              | 设置工作目录                                                 |
+| ENTRYPOINT           | 设置默认命令，运行容器时执行，多个指令时最后一个生效         |
+| CMD                  | 设置`ENTRYPOINT`参数，运行容器时执行，多个CMD指令时最后一个生效 |
+
+### 3、CentOS基础镜像构建实例
+
+更多功能的[CentOS基础镜像](https://www.yuque.com/docs/share/e555c73e-0090-489c-8414-e5d77241ddbe?# 《centos》)
+
+- `locale -a ` 不支持中文语言
+
+```
+FROM centos:7
+MAINTAINER "Geray <1690014753@qq.com>"
+
+RUN yum -y install kde-l10n-Chinese && \
+  yum -y reinstall glibc-common && \
+  yum clean all  && \ 
+  rm -rf /var/cache/yum/* && \
+  localedef -c -f UTF-8 -i zh_CN zh_CN.utf8 && \
+  echo "LC_ALL=\"zh_CN.UTF-8\"" > /etc/locale.conf
+  
+#env 
+ENV TZ "Asia/Shanghai" 
+#ENV LANG en_US.UTF-8  
+ENV LANG zh_CN.UTF-8 
+```
+
+- kde-l10n-Chinese：中文语言包
+- `yum -y reinstall glibc-common `更新包（防止镜像不能成功加载语言包）
+- `localedef -c -f UTF-8 -i zh_CN zh_CN.utf8`设置系统语言
+
+![image-20220111102616989](Docker基础-images/image-20220111102616989.png)
+
+#### 构建并导出镜像练习
+
+```
+docker build -t <image-name>:<label> .
+# 注意后面的. 表示当前路径（Dockerfile的目录里）
+# 如果Dockerfile不在当前目录下，可以使用-f 指定
+```
+
+```
+# 构建
+docker build -t centos7:latest .
+# 导出
+docker save centos7:latest | gzip > cnetos7-latest.tar.gz
+```
+
+```
+# 删除镜像并根据导出的文件导入镜像
+docker rmi centos7:latest
+
+docker load -i cnetos7-latest.tar.gz
+```
+
+
+
+### 3、镜像优化
+
+1. 尽量避免不必要的软件包
+
+   > 降低复杂性并减少依赖；比如：开发调试所需的软件包
+
+2. 尽量减少镜像成熟
+
+   > 便于维护并减小镜像大小，比如软件包的安装命令放到同一个`RUN`中，避免将缓存提交到镜像中
+   >
+   > *yum install 和 yum clean 放在同一个 RUN 指令中*
+
+3. 选择最小的基础镜像
+
+4. 最小权限原则运行应用程序
+
+5. 利用缓存加速构建
+
+   > docker build 按照 Dockerfile 中指令的顺序逐个执行，并把每个指令的构建结果缓存起来，这样下次构建的时候就可以进行复用；尽量把很少变化的指令放到前面，而经常变化的指令（比如 COPY 和 CMD）放到后面。
+
+### 4、`.dockerignore`使用
+
+**作用：**
+
+- 防止无用文件被复制到镜像中
+
+#### 方式1：指定需要被复制的文件
+
+```
+cat .dockerignore
+*
+! file1
+! /opt/file2
+```
+
+- ＂＊＂表示的意思是把所有目录或文件都拒绝了
+- ＂！＂表示被接受的路径或文件
+
+#### 方式2：指定不需要被复制的文件
+
+```
+cat .dockerignore
+mailer-base.d
+fmailer-logging.d
+fmailer-live.df
+```
+
+![image.png](https://cdn.nlark.com/yuque/0/2021/png/8425422/1626320628353-f59167f1-d508-486e-8769-538e3f22b763.png?x-oss-process=image%2Fwatermark%2Ctype_d3F5LW1pY3JvaGVp%2Csize_44%2Ctext_R2VyYXk%3D%2Ccolor_FFFFFF%2Cshadow_50%2Ct_80%2Cg_se%2Cx_10%2Cy_10%2Fresize%2Cw_1500%2Climit_0)
+
+### 5、操作实例（搭建wordpress博客为例）
+
+```
+docker pull wordpress
+docker pull mysql:8
+
+1、创建Mysql容器
+docker run -d --name mysql -p 3306:3306 \
+	-v mysql-data:/var/lib/mysql \
+	-e MYSQL_ROOT_PASSWORD=root \
+    -e MYSQL_DATABASE=wordpress \
+    mysql:8 --character-set-server=utf8
+
+
+2、启动项目(--link到那个容器)
+docker run -d -p 8080:80 \
+	--name wordpess \
+	-e WORDPRESS_DB_HOST=192.168.6.31:3306 \
+	-e WORDPRESS_DB_USER=root \
+	-e WORDPRESS_DB_PASSWORD=root \
+    wordpress
+    
+```
+
+访问测试:192.168.6.31:8080
+
+![image-20220111141832400](Docker基础-images/image-20220111141832400.png)
 
 ## 10、镜像仓库Harbor
 
+有时候使用 Docker Hub 这样的公共仓库可能不方便，用户可以创建一个本地仓库供私人使用。
+
+常见的有两种：registry 和Harbor
+
+### 1、registry
+
+Registry是Docker的开源项目，主要用于创建个人仓库
+
+```
+docker run -d \
+    -p 5000:5000 \
+    -v /opt/data/registry:/var/lib/registry \
+    registry
+    
+# 上传镜像到仓库
+docker tag busybox:1.28.4 127.0.0.1:5000/busybox:v1 
+docker push 127.0.0.1:5000/busybox:v1 
+
+# 用 curl 查看仓库中的镜像。
+curl 127.0.0.1:5000/v2/_catalog
+
+```
+
+
+
+### 2、Harbor介绍
+
+Harbor是构建企业级私有docker镜像的仓库的开源解决方案，它是Docker Registry的更高级封装，它除了提供友好的Web UI界面，角色和用户权限管理，用户操作审计等功能外，它还整合了K8s的插件(Add-ons)仓库。
+
+**Harbor安装有3种方式： **
+
+- 在线安装：从Docker Hub下载Harbor相关镜像，因此安装软件包非常小 
+- 离线安装：安装包包含部署的相关镜像，因此安装包比较大 
+- OVA安装程序：当用户具有vCenter环境时，使用此安装程序，在部署OVA后启动Harbor
+
+### 3、Harbor部署（离线）
+
+下载地址：https://github.com/goharbor/harbor/releases
+
+#### 1. 安装docker-compose
+
+获取地址：https://github.com/docker/compose/releases
+
+Compose是一个用来定义和运行复杂应用的Docker工具。
+
+Compose 通过一个配置文件来管理多个Docker容器，在配置文件中，所有的容器通过services来定义，然后使用docker-compose脚本来启动，停止和重启应用，和应用中的服务以及所有依赖服务的容器，非常适合组合使用多个容器进行开发的场景。
+
+```
+curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+
+chmod +x /usr/local/bin/docker-compose
+
+docker-compose --version
+```
+
+#### 2. 解压配置
+
+```
+tar xf harbor-offline-installer-v2.4.1.tgz -C /opt
+
+# 配置
+cp harbor.yml.tmpl harbor.yml
+```
+
+**harbor.yml详解：**
+
+https://goharbor.io/docs/2.0.0/install-config/configure-yml-file/#required-parameters
+
+```
+# hostname设置访问地址，可以使用ip、域名，不可以设置为127.0.0.1或localhost
+hostname: 192.168.6.31
+
+# HTTP相关配置（不要在生产环境中使用）
+http:
+  port: 80 # HTTP 的端口号，用于 Harbor 门户和 Docker 命令。默认值为 80。
+
+# HTTPS相关配置（需要证书可以先注释）
+#https:
+#  port: 443
+#  certificate: /your/certificate/path # SSL 证书的路径。
+#  private_key: /your/private/key/path # SSL 密钥的路径。
+
+# 取消以下注释，harbor组件之间将使用TLS通信
+# internal_tls:
+#   # set enabled to true means internal tls is enabled
+#   enabled: true
+#   # put your cert and key files on dir
+#   dir: /etc/harbor/tls/internal
+
+# 为 Harbor 系统管理员设置初始密码。该密码仅在Harbor 首次启动时使用。后续登录时，将忽略此设置，并在 Harbor Portal 中设置管理员密码。默认用户名和密码是admin和Harbor12345
+harbor_admin_password: Harbor12345
+
+# 使用本地 PostgreSQL 数据库。您可以选择配置外部数据库
+database:
+  password: root123
+  max_idle_conns: 100 # 空闲连接池中的最大连接数。如果设置为 <=0，则不保留空闲连接。默认值为 50。如果未配置，则值为 2。
+  max_open_conns: 900 # 与数据库的最大打开连接数。如果 <= 0，则打开连接的数量没有限制。对于到 Harbor 数据库的最大连接数，默认值为 100。如果未配置，则值为 0。
+
+# 目标主机上存储 Harbor 数据的位置。即使删除和/或重新创建 Harbor 的容器，该数据也保持不变。
+data_volume: /opt/harbor/data
+
+# 配置 Trivy 扫描仪
+trivy:
+  ignore_unfixed: false # 将标志设置为true仅显示已修复的漏洞。默认值为false
+  skip_update: false 
+  insecure: false
+
+jobservice:
+  max_job_workers: 10
+
+# 设置 web hook 作业的最大重试次数。默认值为 10。
+notification:
+  webhook_job_max_retry: 10
+
+chart:
+  absolute_url: disabled
+
+# 配置日志记录。Harbor 使用 `rsyslog` 来收集每个容器的日志。
+log:
+  level: info
+  local:
+    rotate_count: 50
+    rotate_size: 200M
+    location: /opt/harbor/logs
+
+_version: 2.4.0
+
+# 配置要由 Clair、复制作业服务和 Harbor 使用的代理。
+proxy:
+  http_proxy:
+  https_proxy:
+  no_proxy:
+  components:
+    - core
+    - jobservice
+    - trivy
+```
+#### 3、安装启动
+```
+# 创建所需的目录
+mkdir -p /opt/harbor/{data,logs}
+
+./install.sh 
+```
+
+#### 4、验证并访问
+
+```
+docker-compose ps
+```
+
+![image-20220111145732065](Docker基础-images/image-20220111145732065.png)
+
+访问：IP:80（默认用户名和密码是admin和Harbor12345）
+
+
+
+#### 5、Harbor的基本使用
+
+```
+# 关闭harbor
+docker-compose down -v
+
+# 启动harbor
+docker-compose up -d
+```
+
+**新建项目并上传下载测试**
+
+#### 6、Harbor高可用
+
+参考连接：https://www.yuque.com/docs/share/8f8d1f9d-ae30-46fa-84d2-6845d1075a15?#
