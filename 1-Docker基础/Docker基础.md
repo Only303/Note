@@ -1010,7 +1010,7 @@ fmailer-logging.d
 fmailer-live.df
 ```
 
-![image.png](https://cdn.nlark.com/yuque/0/2021/png/8425422/1626320628353-f59167f1-d508-486e-8769-538e3f22b763.png?x-oss-process=image%2Fwatermark%2Ctype_d3F5LW1pY3JvaGVp%2Csize_44%2Ctext_R2VyYXk%3D%2Ccolor_FFFFFF%2Cshadow_50%2Ct_80%2Cg_se%2Cx_10%2Cy_10%2Fresize%2Cw_1500%2Climit_0)
+![image-20220113164109378](Docker基础-images/image-20220113164109378.png)
 
 ### 5、操作实例（搭建wordpress博客为例）
 
