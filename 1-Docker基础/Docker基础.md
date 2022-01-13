@@ -116,7 +116,7 @@ ip addr show dev ens32
 
 5. 使用开启root远程连接
 
-   ```
+   ```shell
    # 设置root密码
    sudo passwd root
    
@@ -124,6 +124,14 @@ ip addr show dev ens32
    sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin yes/g' /etc/ssh/sshd_config
    
    sudo systemctl restart ssh
+   ```
+
+
+6. 设置时区
+
+   ```shell
+   dpkg-reconfigure tzdata
+   # 选择Asia -> 再选择Shanghai -> OK
    ```
 
    
