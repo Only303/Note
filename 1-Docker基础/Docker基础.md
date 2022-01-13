@@ -134,7 +134,11 @@ ip addr show dev ens32
    # 选择Asia -> 再选择Shanghai -> OK
    ```
 
-   
+   或者直接使用命令：
+
+   ```shell
+   timedatectl set-timezone Asia/Shanghai
+   ```
 
 #### 2. 初始化操作系统
 
