@@ -189,12 +189,16 @@ sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 ```
 
-<!--如果要安装特定版本如下：-->
+**如果要安装特定版本如下：**
 
-```
-apt-cache madison docker-ce # 列出版本
-sudo apt-get install docker-ce=<VERSION_STRING> docker-ce-cli=<VERSION_STRING> containerd.io
-```
+> ```
+> apt-cache madison docker-ce # 列出版本
+> 
+> sudo apt-get install docker-ce=<VERSION_STRING> docker-ce-cli=<VERSION_STRING> containerd.io
+> 
+> # Ubuntu系统安装好像版本号后面需要指定-00
+> sudo apt-get install docker-ce=20.10.12-00 docker-ce-cli=<VERSION_STRING> containerd.io
+> ```
 
 #### 6. 验证
 
@@ -838,12 +842,13 @@ docker rm net{1..4}
    docker run -d --name mysql \
    	-h test \
    	--net=mysql \
+   	-p 3306:3306 \
    	-v /tmp/mysql:/var/lib/mysql \
    	-e MYSQL_ROOT_PASSWORD=12345 \
        mysql:8
    
    # 创建一个同网络的容器并连接
-   docker run -it --name test --network mysql --rm mysql:8 mysql -h<容器IP> -uroot -p
+   docker run -it --name test --rm mysql:8 mysql -h172.23.0.1 -uroot -p
    ```
 
 3. 删除上面创建的网络和容器
@@ -887,6 +892,7 @@ docker rm net{1..4}
 | USER                 | 设置用户名或UID                                              |
 | EXPOSE               | 声明容器运行的服务端口                                       |
 | HEALTHCHECK          | 容器中服务健康检查                                           |
+| VOLUME               | 声明挂载路径                                                 |
 | WORKDIR              | 设置工作目录                                                 |
 | ENTRYPOINT           | 设置默认命令，运行容器时执行，多个指令时最后一个生效         |
 | CMD                  | 设置`ENTRYPOINT`参数，运行容器时执行，多个CMD指令时最后一个生效 |
@@ -900,10 +906,11 @@ docker rm net{1..4}
 ```
 FROM centos:7
 MAINTAINER "Geray <1690014753@qq.com>"
+#LABEL geray=1690014753@qq.com
 
 RUN yum -y install kde-l10n-Chinese && \
   yum -y reinstall glibc-common && \
-  yum clean all  && \ 
+  yum clean all && \ 
   rm -rf /var/cache/yum/* && \
   localedef -c -f UTF-8 -i zh_CN zh_CN.utf8 && \
   echo "LC_ALL=\"zh_CN.UTF-8\"" > /etc/locale.conf
@@ -950,7 +957,7 @@ docker load -i cnetos7-latest.tar.gz
 
    > 降低复杂性并减少依赖；比如：开发调试所需的软件包
 
-2. 尽量减少镜像成熟
+2. 尽量减少镜层数
 
    > 便于维护并减小镜像大小，比如软件包的安装命令放到同一个`RUN`中，避免将缓存提交到镜像中
    >
@@ -1182,12 +1189,15 @@ docker-compose ps
 
 #### 5、Harbor的基本使用
 
+**登陆方式：**`docker login -u admin -p Harbor12345 http://127.0.0.1`
+
 ```
 # 关闭harbor
 docker-compose down -v
 
 # 启动harbor
 docker-compose up -d
+
 ```
 
 **新建项目并上传下载测试**
